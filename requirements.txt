@@ -1,5 +1,7 @@
 # Core ML and Deep Learning
-pytorch>=2.0.0
+# NOTE: On TACC with Python 3.9, use 'torch' instead of 'pytorch'
+# TACC already loads PyTorch via 'module load pytorch', so pip install may not be needed
+torch>=2.0.0
 numpy>=1.21.0
 torchvision>=0.13.0
 torchaudio>=0.13.0
