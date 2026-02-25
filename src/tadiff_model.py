@@ -312,9 +312,9 @@ class MyCallback(Callback):
         # Get model prediction
         intvs = [intv.to(device=pl_module.device) for intv in self.intvs]
         treat_cond = [treat.to(device=pl_module.device) for treat in self.treat_cond]
-        preds, aux_out = self.diffusion.TaDiff_inverse2(pl_module, 
-                                        start_t=self.cfg.max_T//1.5, #600, 
-                                        steps=self.cfg.max_T//1.5, #600,
+        preds, aux_out = self.diffusion.TaDiff_inverse(pl_module,
+                                        start_t=int(self.cfg.max_T//1.5), #600,
+                                        steps=int(self.cfg.max_T//1.5), #600,
                                         x=val_imgs, 
                                         intv=intvs, 
                                         treat_cond=treat_cond,

@@ -45,122 +45,12 @@ from src.visualization.visualizer import (
     Visualizer
 )
 from src.evaluation.metrics import (
-    # setup_metrics,
-    # calculate_metrics,
-    calculate_tumor_volumes,
-    get_slice_indices,
     MetricsCalculator
 )
 from src.utils.image_processing import (
-    # normalize_to_255,
     to_pil_image,
-    prepare_image_batch,
-    create_noise_tensor,
-    extract_slice
 )
 from monai.data import CacheDataset, DataLoader
-
-def process_session(
-    patient_id: str,
-    session_idx: int,
-    batch: Dict[str, torch.Tensor],
-    model: Tadiff_model,
-    device: torch.device,
-    metrics: Dict,
-    save_path: str,
-    diffusion_steps: int = 600,
-    num_samples: int = 5,
-    target_idx: int = 3
-) -> Dict[str, Dict]:
-    """
-    Process a single patient session through the TaDiff model pipeline.
-    
-    The workflow includes:
-    1. Data preparation and tumor volume calculation
-    2. Identification of key tumor slices
-    3. Diffusion-based prediction generation
-    4. Metric calculation and visualization
-    
-    Args:
-        patient_id: Unique patient identifier (str)
-        session_idx: Index of the session being processed (int)
-        batch: Dictionary containing:
-            - 'image': Input scans [1, num_sessions, C, H, W, D]
-            - 'label': Segmentation masks [1, num_sessions, H, W, D]
-            - 'days': Treatment day values [1, num_sessions]
-            - 'treatment': Treatment codes [1, num_sessions]
-        model: Loaded Tadiff_model instance
-        device: Target device (torch.device)
-        metrics: Dictionary of metric functions from setup_metrics()
-        save_path: Base directory for saving results (str)
-        diffusion_steps: Number of diffusion steps (default: 600)
-        num_samples: Number of predictions to generate (default: 5)
-        target_idx: Index of target session for prediction (default: 3)
-        
-    Returns:
-        Dict[str, Dict]: Nested dictionary containing:
-            - Keys: Slice indices (f"slice_{idx}")
-            - Values: Dictionary of metric scores for each sample
-            
-    Outputs:
-        - Visualizations saved to {save_path}/p-{patient_id}/-ses-{session_idx:02d}/
-        - Console output of processing status
-    """
-    session_scores = {}
-    # patient_id = patient_id
-    
-    # Extract tensors from batch
-    labels = batch['label'].to(device)
-    images = batch['image'].to(device)
-    days = batch['days'].to(device)
-    treatments = batch['treatment'].to(device)
-    
-
-    
-    # Calculate volumes and get important slices
-    z_mask_size = calculate_tumor_volumes(labels[0, :, :, :, :])
-    mean_vol = z_mask_size[z_mask_size > 0].mean()
-    
-    # Adjust minimum volume threshold
-    n_sessions = labels.shape[1]
-    if mean_vol < n_sessions * 100 and z_mask_size.max() > n_sessions * 200:
-        mean_vol = n_sessions * 100
-    z_mask_size[z_mask_size < mean_vol] = 0
-    
-    # b, cs, h, w, z = images.shape # b, c*sess, h, w, z, eg. [1, 59, 192, 192, 192]
-    # images = images.view(b, 4, n_sessions, h, w, z) # t1, t1c, flair, t2
-    # images = images.permute(0, 2, 1, 3, 4, 5) # b, s, c, h, w, z
-    # images = images[:, :, :-1, :, :, :]  # remove T2 modal, b, s, c-1, h, w, z
-    
-    images = prepare_image_batch(images, n_sessions)
-    
-    # Get slice indices
-    top_k_indices = get_slice_indices(z_mask_size, top_k=3)
-    
-    # Create session directory
-    session_path = os.path.join(save_path, f'p-{patient_id}', f'-ses-{session_idx:02d}')
-    create_directory(session_path)
-    
-    # Process each slice
-    for slice_idx in top_k_indices:
-        slice_scores = process_slice(
-            slice_idx=slice_idx.item(),
-            session_idx=session_idx,
-            images=images,
-            labels=labels,
-            days=days,
-            treatments=treatments,
-            model=model,
-            device=device,
-            metrics=metrics,
-            session_path=session_path,
-            diffusion_steps=diffusion_steps,
-            num_samples=num_samples,
-            target_idx=target_idx
-        )
-        session_scores.update(slice_scores)
-    
-    return session_scores
 
 def process_slice(
     slice_idx: int,
@@ -328,8 +218,9 @@ def evaluate_predictions(
     
     # Calculate average predictions
     avg_img = torch.mean(predictions['images'], 0)  # (3, H, W)
-    avg_mask_pred = torch.sigmoid(predictions['masks'])
-    avg_mask_pred = torch.mean(avg_mask_pred, 0)    # (4, H, W)
+    # NOTE: sigmoid was already applied in process_slice() before storing in predictions
+    # Do NOT apply sigmoid again here — double sigmoid compresses values toward 0.5
+    avg_mask_pred = torch.mean(predictions['masks'], 0)    # (4, H, W)
     
     # Calculate uncertainty maps
     img_std = torch.std(predictions['images'], 0)  # (3, H, W) - t1,t1c,flair 
@@ -453,69 +344,21 @@ def load_data(test_files, config: TestConfig):
     return DataLoader(test_dataset, batch_size=1, shuffle=False)
 
 def setup_model(config: TestConfig, device: str):
-    """Initialize and load model"""
+    """Initialize and load model from Lightning checkpoint.
+
+    Lightning's load_from_checkpoint replays __init__ using the config
+    saved inside the checkpoint's hyperparameters. The model architecture
+    (channels, heads, etc.) is determined by that saved config — NOT by
+    the TestConfig values. This ensures the loaded weights always match
+    the architecture they were trained with.
+    """
     model = Tadiff_model.load_from_checkpoint(
         config.model_checkpoint,
-        model_channels=config.model_channels,
-        num_heads=config.num_heads,
-        num_res_blocks=config.num_res_blocks,
         strict=False
     )
     model.to(device)
     model.eval()
     return model
-
-def process_slice_old(model, data, slice_idx, config: TestConfig, device: str):
-    """Process a single slice through the model"""
-    # Prepare input data
-    labels = data['label'].to(device)
-    imgs = data['image'].to(device)
-    days = data['days'].to(device)
-    treats = data['treatment'].to(device)
-    
-    # Reshape and prepare data
-    b, cs, h, w, z = imgs.shape
-    imgs = imgs.view(b, 4, -1, h, w, z)
-    imgs = imgs.permute(0, 2, 1, 3, 4, 5)
-    imgs = imgs[:, :, :-1, :, :, :]  # Remove T2 modal
-    
-    # Get target session indices
-    target_sess = config.target_session_idx
-    Sf = np.array([target_sess-3, target_sess-2, target_sess-1, target_sess])
-    Sf[Sf < 0] = 0
-    Sf = list(Sf)
-    
-    # Prepare model inputs
-    print(f'labels.shape: {labels.shape}, Sf: {Sf}, slice_idx: {slice_idx}')
-    masks = labels[0, Sf, :, :, :]
-    masks = masks[:, :, :, [slice_idx]*config.num_samples].permute(3, 0, 1, 2)
-    seq_imgs = imgs[0, Sf, :, :, :, :]
-    seq_imgs = seq_imgs[:, :, :, :, [slice_idx]*config.num_samples].permute(4, 0, 1, 2, 3)
-    x_t = seq_imgs.clone()
-    x_0 = []
-    noise = torch.randn((config.num_samples, 3, h, w))
-    for i, j in zip(range(config.num_samples), config.target_session_idx * torch.ones((config.num_samples,), dtype=torch.int8).to(device)):
-        x_0.append(seq_imgs[[i], j, :, :, :])
-        x_t[i, j, :, :, :] = noise[i, :, :, :]
-    x_0 = torch.cat(x_0, dim=0)
-    x_t = x_t.reshape(config.num_samples, len(Sf)*3, h, w)
-    day_sq = days[0, Sf].repeat(config.num_samples, 1)
-    treat_sq = treats[0, Sf].repeat(config.num_samples, 1)
-    # Generate predictions
-    diffusion = GaussianDiffusion(T=config.diffusion_steps, schedule='linear', device=device)
-    pred_img, seg_seq = diffusion.TaDiff_inverse(
-        model,
-        start_t=config.diffusion_steps//1.5,
-        steps=config.diffusion_steps//1.5,
-        x=x_t.to(device),
-        intv=[day_sq[:, i].to(device) for i in range(4)],
-        treat_cond=[treat_sq[:, i].to(device) for i in range(4)],
-        i_tg=config.target_session_idx * torch.ones((config.num_samples,), dtype=torch.int8).to(device),
-        device=device
-    )
-    
-    return pred_img, seg_seq, masks, x_0 #seq_imgs
-
 
 def main():
     # Load configuration
