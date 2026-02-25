@@ -6,7 +6,8 @@ network = 'TaDiff_Net'
 data_pool = ['sailor']
 
 # UPDATE THIS PATH to your local preprocessed data directory
-data_dir = {'sailor': './data/sailor'}
+# On TACC ls6: /work/11343/rohitk59/ls6/TaDiff_Baseline/TaDiff-Net_SAILOR/data/sailor/sailor_processed
+data_dir = {'sailor': '/work/11343/rohitk59/ls6/TaDiff_Baseline/TaDiff-Net_SAILOR/data/sailor/sailor_processed'}
 
 image_size = 192
 in_channels = 13
@@ -57,8 +58,8 @@ cache_rate = 0.  # cache rate for MONAI CacheDataset (0=no cache, 1=all in memor
 
 # -----------------------------------------------
 # I/O, system and log config for trainer (e.g. lightning)
-wandb_entity = "qhliu"    # UPDATE to your own wandb entity
-logdir = './ckpt'
+wandb_entity = "qhliu"    # UPDATE to your own wandb entity (or will use TensorBoard fallback)
+logdir = '/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts'
 log_interval = 1
 seed = 114514
 
