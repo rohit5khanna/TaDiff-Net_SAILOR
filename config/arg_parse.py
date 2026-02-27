@@ -30,5 +30,10 @@ def load_args(cfg):
     ## VALIDATION
     parser.add_argument("--val_interval_epoch", type=int, default=cfg.val_interval_epoch)
 
+    ## LAMBDA SCHEDULE
+    parser.add_argument("--lambda_schedule", type=str, default="fixed",
+                        choices=["fixed", "time_dependent"],
+                        help='Lambda schedule for aux_loss: "fixed" (constant 0.01) or "time_dependent" (lambda(t) = 0.01 * alphabar_t^2)')
+
     args = parser.parse_args()
     return args

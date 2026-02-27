@@ -78,6 +78,8 @@ def main():
     print(f"GPU devices:    {cfg.gpu_devices}")
     print(f"Precision:      {cfg.precision}")
     print(f"aux_loss_w:     {cfg.aux_loss_w}")
+    lambda_schedule = getattr(cfg, 'lambda_schedule', 'fixed')
+    print(f"Lambda schedule:{lambda_schedule}")
     print("=" * 60)
 
     # ---- Step 2: Set seed ----
@@ -128,9 +130,15 @@ def main():
     # ---- Step 6: Configure logger ----
     # Try wandb first, fall back to TensorBoard
     try:
+        # Include lambda_schedule in run name for easy identification
+        lambda_schedule = getattr(cfg, 'lambda_schedule', 'fixed')
+        from datetime import datetime
+        run_name = f"tadiff_{lambda_schedule}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         logger = WandbLogger(
             project=f"TaDiff_{cfg.network}",
             entity=cfg.wandb_entity,
+            name=run_name,
             save_dir=cfg.logdir,
             log_model=False,  # don't upload checkpoints to wandb
         )

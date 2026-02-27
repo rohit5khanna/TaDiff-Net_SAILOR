@@ -43,6 +43,7 @@ warmup_steps = 1000       # was 100 (debug), paper says 1000
 
 loss_type = 'mse'         # paper uses MSE for diffusion loss (Eq. 16)
 aux_loss_w = 0.01         # ADDED: lambda in joint loss (Eq. 16), referenced in tadiff_model.py line 209
+lambda_schedule = 'fixed'  # 'fixed' (constant 0.01) or 'time_dependent' (lambda(t) = 0.01 * alphabar_t^2)
 
 batch_size = 1             # per-GPU batch size for 3D volumes (each yields sw_batch 2D slices)
 sw_batch = 16              # number of 2D slices sampled per volume

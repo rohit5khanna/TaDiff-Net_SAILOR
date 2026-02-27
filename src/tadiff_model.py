@@ -203,10 +203,37 @@ class Tadiff_model(LightningModule):
             else:
                 dice_loss[i, j] = dice_loss[i, j] * torch.sqrt(w_tg[i]) # w_tg[i]**2  # weight target image loss, w_tg ** 3
             
-        # w_dims = (b,) + tuple((1 for _ in dice_loss.shape[1:])) 
+        # w_dims = (b,) + tuple((1 for _ in dice_loss.shape[1:]))
         # dice_loss = dice_loss * w_tg.view(b, 1)  # weighted the loss one more time, w_tg ** 3 for target image, but for refence image only appply w_tg
-        
-        loss = loss1 + torch.mean(dice_loss) * self.cfg.aux_loss_w
+
+        # ========== LAMBDA SCHEDULE FOR AUXILIARY LOSS ==========
+        # Paper uses fixed lambda=0.01 for segmentation loss weighting (Eq. 16).
+        # This implementation supports both fixed and time-dependent schedules:
+        #   - fixed: lambda(t) = 0.01 (original paper)
+        #   - time_dependent: lambda(t) = 0.01 * alphabar_t^2 (experimental)
+        #
+        # Time-dependent motivation: Weight segmentation loss higher at low noise (clear signal)
+        # and lower at high noise (corrupted signal) to improve training stability.
+
+        if hasattr(self.cfg, 'lambda_schedule') and self.cfg.lambda_schedule == 'time_dependent':
+            # ===== TIME-DEPENDENT LAMBDA =====
+            # Get alphabar for the current timestep (b,) shape
+            alphabar_t = self.alphabar[t - 1]  # shape: (b,)
+
+            # Compute time-dependent lambda: lambda(t) = lambda_0 * alphabar_t^k
+            k = 2.0  # exponent controlling how much lambda varies with time
+            lambda_t = self.cfg.aux_loss_w * (alphabar_t ** k)  # shape: (b,)
+
+            # Apply time-dependent weighting to dice loss (average across batch)
+            # Reshape lambda_t for broadcasting: (b,) -> (b, 1, 1, 1) to match dice_loss shape (b, 4, h, w)
+            lambda_t_reshaped = lambda_t.view(-1, 1, 1, 1)
+            weighted_dice_loss = torch.mean(dice_loss) * lambda_t_reshaped.mean()  # average lambda across batch
+        else:
+            # ===== FIXED LAMBDA (ORIGINAL PAPER) =====
+            # Use constant lambda = aux_loss_w = 0.01 regardless of timestep
+            weighted_dice_loss = torch.mean(dice_loss) * self.cfg.aux_loss_w
+
+        loss = loss1 + weighted_dice_loss
         
         # mask_pred = F.sigmoid(mask_pred)
         mask_pred = torch.sigmoid(mask_pred)
