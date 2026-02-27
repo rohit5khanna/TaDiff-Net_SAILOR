@@ -59,7 +59,7 @@ cache_rate = 0.  # cache rate for MONAI CacheDataset (0=no cache, 1=all in memor
 
 # -----------------------------------------------
 # I/O, system and log config for trainer (e.g. lightning)
-wandb_entity = "rkhanna5"    # WandB username for logging metrics and comparing runs
+wandb_entity = "rkhanna5-university-of-texas-at-austin"    # WandB team for logging metrics and comparing runs
 logdir = '/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts'
 log_interval = 1
 seed = 114514
