@@ -807,6 +807,8 @@ class TaDiff_Net(nn.Module):
             
         if i_tg is None:
             i_tg = -th.ones(size=(b,), dtype=th.int8, device=x.device)  # -1
+        i_tg_long = i_tg.long()
+        target_idx = i_tg_long % len(treat_code)
             
         d_embs = [timestep_embedding(days, self.model_channels) for days in intv_t] 
         days_feat = [self.days_embed(d) for d in d_embs]
@@ -815,20 +817,16 @@ class TaDiff_Net(nn.Module):
         treat_feat = [self.treats_embed((t[:, None] + 1)*10) for t in treat_code]
         
         treat_day_sum = th.cat([(t + d).unsqueeze(1)  for t, d in zip(treat_feat, days_feat)], dim=1) # b, s, dim
-        
-        # target =  th.cat([treat_day_sum[[i], j, :] for i, j in zip(range(b), i_tg)], dim=0) # b, dim
-        
-        if b == 1:
-            target = treat_day_sum[:, i_tg.long(), :]
-        else:
-            target =  th.cat([treat_day_sum[[i], j, :] for i, j in zip(range(b), i_tg)], dim=0) # b, dim
-        
+
+        batch_idx = th.arange(b, device=x.device, dtype=th.long)
+        target = treat_day_sum[batch_idx, target_idx, :]  # b, dim
         treat_day_diff = treat_day_sum - target[:, None, :]
         
         middle_emb = emb + target
-        
-        for i, j in zip(range(b), i_tg):
-            treat_day_diff[i, j, :] = treat_day_diff[i, j, :] + middle_emb[i]
+
+        treat_day_diff[batch_idx, target_idx, :] = (
+            treat_day_diff[batch_idx, target_idx, :] + middle_emb
+        )
     
         treat_day_diff = treat_day_diff.view(b, -1)
         
@@ -844,4 +842,3 @@ class TaDiff_Net(nn.Module):
             h = module(h, treat_day_diff)
         h = h.type(x.dtype)
         return self.out(h)
-

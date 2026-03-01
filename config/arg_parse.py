@@ -26,12 +26,16 @@ def load_args(cfg):
     parser.add_argument("--accumulate_grad_batches", type=int, default=cfg.accumulate_grad_batches)
     parser.add_argument("--gpu_strategy", type=str, default=cfg.gpu_strategy,
                         help='Training strategy: auto, ddp, etc.')
+    parser.add_argument("--log_interval", type=int, default=cfg.log_interval,
+                        help='Log metrics every N optimizer steps')
+    parser.add_argument("--enable_progress_bar", default=cfg.enable_progress_bar, action='store_true',
+                        help='Enable Rich progress bar output')
 
     ## VALIDATION
     parser.add_argument("--val_interval_epoch", type=int, default=cfg.val_interval_epoch)
 
     ## LAMBDA SCHEDULE
-    parser.add_argument("--lambda_schedule", type=str, default="fixed",
+    parser.add_argument("--lambda_schedule", type=str, default=cfg.lambda_schedule,
                         choices=["fixed", "time_dependent"],
                         help='Lambda schedule for aux_loss: "fixed" (constant 0.01) or "time_dependent" (lambda(t) = 0.01 * alphabar_t^2)')
 

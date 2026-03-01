@@ -61,7 +61,7 @@ cache_rate = 0.  # cache rate for MONAI CacheDataset (0=no cache, 1=all in memor
 # I/O, system and log config for trainer (e.g. lightning)
 wandb_entity = "rkhanna5-university-of-texas-at-austin"    # WandB team for logging metrics and comparing runs
 logdir = '/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts'
-log_interval = 1
+log_interval = 50
 seed = 114514
 
 # UPDATE these based on your hardware:
@@ -69,6 +69,7 @@ gpu_devices = '0'          # was '0, 1' — set based on available GPUs
 gpu_strategy = "auto"      # was "ddp" — use "auto" for single GPU, "ddp" for multi-GPU
 gpu_accelerator = "gpu"
 precision = 32             # 16-mixed, 32
+enable_progress_bar = False
 
 val_interval_epoch = 10
 resume_from_ckpt = False

@@ -39,6 +39,7 @@ from pytorch_lightning import Trainer, seed_everything
 # Optimize A100 Tensor Cores for FP32 operations
 # This significantly speeds up training on A100 GPUs
 torch.set_float32_matmul_precision('high')
+torch.backends.cudnn.benchmark = True
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, RichProgressBar
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 
@@ -120,11 +121,12 @@ def main():
     callbacks.append(checkpoint_callback)
 
     # 5b. LearningRateMonitor: logs LR to the logger
-    lr_monitor = LearningRateMonitor(logging_interval='step')
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
     callbacks.append(lr_monitor)
 
-    # 5c. Progress bar
-    callbacks.append(RichProgressBar())
+    # 5c. Progress bar (disable on long cluster jobs for lower overhead)
+    if cfg.enable_progress_bar:
+        callbacks.append(RichProgressBar())
 
     # 5d. MyCallback for validation visualization
     # NOTE: MyCallback requires a sample batch to initialize.
@@ -181,7 +183,7 @@ def main():
         log_every_n_steps=cfg.log_interval,
         check_val_every_n_epoch=cfg.val_interval_epoch,
         deterministic=False,  # True would be slower
-        enable_progress_bar=True,
+        enable_progress_bar=cfg.enable_progress_bar,
     )
 
     # Handle checkpoint resumption

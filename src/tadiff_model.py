@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 from src.net.tadiff_unet_arch import TaDiff_Net
 # import wandb # logging metrics
@@ -37,23 +36,25 @@ class Tadiff_model(LightningModule):
         #     self._model.convert_to_fp16()
         
         self.diffusion = GaussianDiffusion(T=self.cfg.max_T, schedule=self.cfg.ddpm_schedule)#'linear')
-        # Register alphabar as a non-persistent buffer so it auto-moves to GPU (no numpy↔torch churn)
-        _alphabar_np = np.cumprod(1 - np.linspace(1e-4, 2e-2, self.cfg.max_T))
-        self.register_buffer('alphabar', torch.from_numpy(_alphabar_np).float(), persistent=False)
         
         # self.diffusion = LinearDiffusion(T=self.cfg.max_T)#'linear')
         self.best_val_loss = None
         self.best_val_epoch = 0
-        self.val_step_outputs = [] # for callback
         self.rng = torch.quasirandom.SobolEngine(1, scramble=True)
-        # self.dilation3 = torch.ones(1,1,3,3)
-        self.dilation_filters = torch.ones(1,1,11,11) / 10.
+        # Keep filter as module buffer to avoid repeated .to(device) in hot path.
+        self.register_buffer("dilation_filters", torch.ones(1, 1, 11, 11) / 10.0, persistent=False)
         # self.dice = DiceLoss(include_background=False, sigmoid=True)
         self.dice = DiceLoss(smooth_nr=0, smooth_dr=1e-5, squared_pred=True, 
                              to_onehot_y=False, sigmoid=True, reduction="none")
         # self.dice = GeneralizedDiceFocalLoss( to_onehot_y=False, sigmoid=True, reduction="none")
         self.dice_metric = DiceMetric(include_background=True, reduction="mean")
         # self.dice_metric_batch = DiceMetric(include_background=True, reduction="mean_batch") # per class dice
+
+    def _sync_dist(self) -> bool:
+        trainer = getattr(self, "trainer", None)
+        if trainer is None:
+            return False
+        return int(getattr(trainer, "world_size", 1)) > 1
 
     def forward(self, x, timesteps, intv_t, treat_code, i_tg=None):
         return self._model(x, timesteps, intv_t,  treat_code, i_tg)
@@ -130,8 +131,8 @@ class Tadiff_model(LightningModule):
         
         # Paper-faithful scenario sampling: 50% future, 30% middle, 20% past
         if mode == 'train':
-            rand_vals = np.random.random_sample(b)
-            i_tg = torch.zeros(b, dtype=torch.int8, device=self.device)
+            rand_vals = torch.rand(b, device=self.device)
+            i_tg = torch.zeros((b,), dtype=torch.int8, device=self.device)
             i_tg[rand_vals < 0.5] = -1     # future: 50%
             i_tg[(rand_vals >= 0.5) & (rand_vals < 0.8)] = 0   # middle: 30%
             i_tg[rand_vals >= 0.8] = -2    # past: 20%
@@ -154,7 +155,7 @@ class Tadiff_model(LightningModule):
         gt_img = imgs[batch_idx, i_tg_long]     # (b, c, h, w)
         gt_label = label[batch_idx, i_tg_long]   # (b, h, w)
         t = torch.randint(1, self.diffusion.T + 1, [b], device=self.device)
-        w_tg = self.alphabar[t - 1]              # (b,) — registered buffer, already on GPU
+        w_tg = self.diffusion.alphabar[t - 1]    # (b,) — diffusion buffer, already on GPU
 
         xt, epsilon = self.diffusion.sample(gt_img.to(torch.float32), t)
 
@@ -178,21 +179,23 @@ class Tadiff_model(LightningModule):
         loss_weigths = loss_weigths * torch.exp(-loss_weigths)
         # loss_weigths = torch.clamp(F.conv2d(loss_weigths, self.dilation_filters.to(loss_weigths.device), padding='same'), 0, 1)
         # loss_weigths = torch.clamp(F.conv2d(loss_weigths, self.dilation_filters.to(loss_weigths.device), padding='same'), min=0.886)
-        loss_weigths = F.conv2d(loss_weigths, self.dilation_filters.to(loss_weigths.device), padding='same') + 1.
+        loss_weigths = F.conv2d(loss_weigths, self.dilation_filters, padding='same') + 1.
         
         img_pred, mask_pred = out[:, 4:7, :, :], out[:, 0:4, :, :]
         
         loss1 = torch.mean(loss_weigths * (img_pred - epsilon)**2)
         mse = self.loss_function(img_pred, epsilon) # without weights on tumor
         
-        dice_loss = self.dice(mask_pred, label).squeeze() # all segementaed masks b, 4, 1, 1
+        dice_loss = self.dice(mask_pred, label)  # (b, 4, ...) with reduction="none"
         
         # w_tg is already a GPU tensor (registered buffer), no CPU→GPU conversion needed
         # Vectorized dice loss weighting based on noise level (no Python loops)
         sqrt_w = torch.sqrt(w_tg)  # (b,)
 
         # Weight target session's dice loss by sqrt(alphabar_t)
-        dice_loss[batch_idx, i_tg_long] = dice_loss[batch_idx, i_tg_long] * sqrt_w
+        target_dice = dice_loss[batch_idx, i_tg_long]
+        sqrt_w_view = sqrt_w.view((b,) + (1,) * (target_dice.dim() - 1))
+        dice_loss[batch_idx, i_tg_long] = target_dice * sqrt_w_view
 
         # For masked-out samples, zero out non-target sessions
         if maskout_batch.any():
@@ -203,28 +206,36 @@ class Tadiff_model(LightningModule):
             sess_idx = torch.arange(n_sess, device=self.device, dtype=torch.long).unsqueeze(0)  # (1, n_sess)
             non_target = sess_idx != target_idx.unsqueeze(1)                    # (b, n_sess)
             zero_mask = maskout_batch.unsqueeze(1) & non_target                 # (b, n_sess)
+            if dice_loss.dim() > 2:
+                zero_mask = zero_mask.view(b, n_sess, *([1] * (dice_loss.dim() - 2)))
             dice_loss = dice_loss.masked_fill(zero_mask, 0.)
+
+        # Per-sample dice for consistent lambda weighting in both fixed/time-dependent modes.
+        dice_per_sample = dice_loss.view(b, -1).mean(dim=1)  # (b,)
 
         # ========== LAMBDA SCHEDULE FOR AUXILIARY LOSS ==========
         if hasattr(self.cfg, 'lambda_schedule') and self.cfg.lambda_schedule == 'time_dependent':
             # Time-dependent: lambda(t) = lambda_0 * alphabar_t^k
             # All tensors already on GPU — no CPU↔GPU transfers
-            alphabar_t = self.alphabar[t - 1]  # (b,) — registered buffer, already on GPU
+            alphabar_t = self.diffusion.alphabar[t - 1]  # (b,) — buffer already on GPU
             k = 2.0
             lambda_t = self.cfg.aux_loss_w * (alphabar_t ** k)  # (b,)
-            weighted_dice_loss = torch.mean(dice_loss) * lambda_t.mean()
+            weighted_dice_loss = (dice_per_sample * lambda_t).mean()
         else:
             # Fixed lambda (original paper): lambda = aux_loss_w = 0.01
-            weighted_dice_loss = torch.mean(dice_loss) * self.cfg.aux_loss_w
+            weighted_dice_loss = dice_per_sample.mean() * self.cfg.aux_loss_w
 
         loss = loss1 + weighted_dice_loss
         
-        # mask_pred = F.sigmoid(mask_pred)
-        mask_pred = torch.sigmoid(mask_pred)
-        mask_pred = (mask_pred > 0.5) * 1  # fix threshold for segment mask 0.5
-        self.dice_metric(mask_pred, label)
-        dice_last =  self.dice_metric.aggregate() # only mean 4 mask dices
-        self.dice_metric.reset()
+        if mode == "val":
+            mask_pred = torch.sigmoid(mask_pred)
+            mask_pred = (mask_pred > 0.5) * 1  # fix threshold for segment mask 0.5
+            self.dice_metric(mask_pred, label)
+            dice_last = self.dice_metric.aggregate()  # only mean 4 mask dices
+            self.dice_metric.reset()
+        else:
+            # Skip expensive thresholded Dice metric in train path.
+            dice_last = torch.tensor(0.0, device=self.device)
         # if mode == 'train':
         #     self.dice_metric(mask_pred, label)
         #     dice_last =  self.dice_metric.aggregate() # only mean 4 mask dices
@@ -238,17 +249,17 @@ class Tadiff_model(LightningModule):
         
     def training_step(self, batch, batch_idx):
         loss, mse, dice_seg = self.get_loss(batch, mode='train')
-        self.log("train_loss", loss,  sync_dist=True, on_epoch=True, prog_bar=True) # on_epoch=False default
-        self.log("train_mse", mse,  sync_dist=True, on_epoch=False, prog_bar=False) # on_epoch=False default
-        self.log("train_dice", dice_seg,  sync_dist=True, on_epoch=False, prog_bar=False) # on_epoch=False default
+        sync_dist = self._sync_dist()
+        self.log("train_loss", loss, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_mse", mse, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=False)
         return {"loss": loss, "mse": mse, "dice_seg": dice_seg}
 
     def validation_step(self, batch, batch_idx):
         loss, mse, dice = self.get_loss(batch, mode='val')
-        self.val_step_outputs.append({"val_loss": loss})
-        self.log("val_loss", loss.item(), sync_dist=True, prog_bar=False) # on_epoch=True default
-        self.log("val_mse", mse.item(), sync_dist=True, prog_bar=False) # on_epoch=True default
-        self.log("val_dice", dice.item(), sync_dist=True, prog_bar=False) # on_epoch=True default
+        sync_dist = self._sync_dist()
+        self.log("val_loss", loss, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val_mse", mse, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=False)
+        self.log("val_dice", dice, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=False)
         return {"val_loss": loss, "val_mse": mse, "val_dice": dice}
 
 
@@ -297,7 +308,11 @@ class MyCallback(Callback):
         # c = wandb.wandb_sdk.wandb_artifacts.get_artifacts_cache()
         # c.cleanup(wandb.util.from_human_size("0GB"))
         
-        mean_val_loss = torch.stack([torch.tensor(x["val_loss"].clone().detach()) for x in pl_module.val_step_outputs]).mean()
+        mean_val_loss = trainer.callback_metrics.get("val_loss")
+        if mean_val_loss is None:
+            mean_val_loss = torch.tensor(float("nan"), device=pl_module.device)
+        elif not isinstance(mean_val_loss, torch.Tensor):
+            mean_val_loss = torch.tensor(mean_val_loss, device=pl_module.device)
         # pl_module.log("val_avg_dice", mean_val_dice, sync_dist=True )
         # pl_module.log("val_avg_loss", mean_val_loss, sync_dist=True)
         if pl_module.best_val_loss is None:
@@ -377,6 +392,5 @@ class MyCallback(Callback):
                                             ],
                                     caption=[f'input:day{intvs[2][2]}-tr{treat_cond[2][2]}', f'target:day{intvs[3][2]}-tr{treat_cond[3][2]}', "pred-img", "pred-mask-tg"])
 
-        pl_module.val_step_outputs.clear()
-         
+        
 # # trainer = Trainer(callbacks=[MyPrintingCallback()])
