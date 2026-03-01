@@ -35,6 +35,10 @@ import sys
 import torch
 import numpy as np
 from pytorch_lightning import Trainer, seed_everything
+
+# Optimize A100 Tensor Cores for FP32 operations
+# This significantly speeds up training on A100 GPUs
+torch.set_float32_matmul_precision('high')
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, RichProgressBar
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 
