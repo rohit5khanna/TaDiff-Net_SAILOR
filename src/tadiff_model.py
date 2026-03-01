@@ -218,7 +218,9 @@ class Tadiff_model(LightningModule):
         if hasattr(self.cfg, 'lambda_schedule') and self.cfg.lambda_schedule == 'time_dependent':
             # ===== TIME-DEPENDENT LAMBDA =====
             # Get alphabar for the current timestep (b,) shape
-            alphabar_t = self.alphabar[t - 1]  # shape: (b,)
+            # Note: t is on GPU (CUDA), self.alphabar is numpy on CPU, so convert t to CPU before indexing
+            t_indices = (t.cpu().long() - 1).numpy()
+            alphabar_t = torch.from_numpy(self.alphabar[t_indices]).to(t.device).float()  # shape: (b,)
 
             # Compute time-dependent lambda: lambda(t) = lambda_0 * alphabar_t^k
             k = 2.0  # exponent controlling how much lambda varies with time
