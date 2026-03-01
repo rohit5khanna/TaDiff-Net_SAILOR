@@ -199,8 +199,11 @@ class Tadiff_model(LightningModule):
         # For masked-out samples, zero out non-target sessions
         if maskout_batch.any():
             n_sess = dice_loss.shape[1]
+            # Convert negative indices to positive canonical form (-1 → n_sess-1, etc.)
+            # This is critical because i_tg_long can be negative (e.g., -1 for last session)
+            target_idx = i_tg_long % n_sess  # handles negative wrapping correctly
             sess_idx = torch.arange(n_sess, device=self.device, dtype=torch.long).unsqueeze(0)  # (1, n_sess)
-            non_target = sess_idx != i_tg_long.unsqueeze(1)                     # (b, n_sess)
+            non_target = sess_idx != target_idx.unsqueeze(1)                    # (b, n_sess)
             zero_mask = maskout_batch.unsqueeze(1) & non_target                 # (b, n_sess)
             dice_loss = dice_loss.masked_fill(zero_mask, 0.)
 
