@@ -3,21 +3,22 @@ import torch.nn as nn
 import numpy as np
 from typing import Union, Optional
 
-class GaussianDiffusion():
-    '''Gaussian Diffusion process with linear beta scheduling'''
-    def __init__(self, T, schedule, device='cpu'):
+class GaussianDiffusion(nn.Module):
+    '''Gaussian Diffusion process with linear beta scheduling.
+       Extends nn.Module so buffers auto-move to GPU with the model.'''
+    def __init__(self, T, schedule):
+        super().__init__()
         # Number of diffusion steps
         self.T = T
-        self.device = device
-    
+
         # Initialize noise schedule
         if schedule == 'linear':
             # Linear noise schedule
             b0=1e-4
             bT=2e-2
-            self.beta = torch.linspace(b0, bT, T, device=self.device)
-            self.alpha = 1 - self.beta
-            self.alphabar = torch.cumprod(self.alpha, dim=0)
+            beta = torch.linspace(b0, bT, T)
+            alpha = 1 - beta
+            alphabar = torch.cumprod(alpha, dim=0)
         elif schedule == 'cosine':
             # Cosine noise schedule
             s = 0.008
@@ -26,14 +27,17 @@ class GaussianDiffusion():
             alphas_cumprod = torch.cos(((x / T) + s) / (1 + s) * torch.pi * 0.5) ** 2
             alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
             betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-            self.beta = torch.clip(betas, 0, 0.999)
-            self.alpha = 1 - self.beta
-            self.alphabar = torch.cumprod(self.alpha, dim=0)
-            
-        # Compute cumulative products
-        self.betabar = torch.cumprod(self.beta, dim=0)
-        self.sqrt_alphas_cumprod = torch.sqrt(self.alphabar)
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphabar)
+            beta = torch.clip(betas, 0, 0.999)
+            alpha = 1 - beta
+            alphabar = torch.cumprod(alpha, dim=0)
+
+        # Register as non-persistent buffers: auto-move to GPU, but don't pollute state_dict
+        self.register_buffer('beta', beta, persistent=False)
+        self.register_buffer('alpha', alpha, persistent=False)
+        self.register_buffer('alphabar', alphabar, persistent=False)
+        self.register_buffer('betabar', torch.cumprod(beta, dim=0), persistent=False)
+        self.register_buffer('sqrt_alphas_cumprod', torch.sqrt(alphabar), persistent=False)
+        self.register_buffer('sqrt_one_minus_alphas_cumprod', torch.sqrt(1. - alphabar), persistent=False)
 
    
     def sample(self, x0, t):
@@ -138,7 +142,7 @@ class GaussianDiffusion():
         w_p = self.alphabar[:T_m] / self.alphabar[:T_m].sum()
         
         y = torch.zeros_like(x[:, :4, :, :])
-        times = torch.linspace(0, self.T - 1, steps).long().to(self.device).flip(0)
+        times = torch.linspace(0, self.T - 1, steps).long().to(self.beta.device).flip(0)
         
         for t, t_next in zip(times[:-1], times[1:]):
             with torch.no_grad():
@@ -183,7 +187,7 @@ class GaussianDiffusion():
             if t <= T_m:
                 y += mask * w_p[max(0, t-1)]
         
-        return torch.tensor(x_next, device=self.device), torch.tensor(y, device=self.device)
+        return torch.tensor(x_next, device=self.beta.device), torch.tensor(y, device=self.beta.device)
     
     def ddim_inverse(self, net, x=None, intv=None, treat_cond=None, i_tg= None,
                        steps=None, start_t=None, step_mask = 10, eta=0., device='cpu'):

@@ -37,7 +37,9 @@ class Tadiff_model(LightningModule):
         #     self._model.convert_to_fp16()
         
         self.diffusion = GaussianDiffusion(T=self.cfg.max_T, schedule=self.cfg.ddpm_schedule)#'linear')
-        self.alphabar = np.cumprod(1-np.linspace(1e-4, 2e-2, self.cfg.max_T))
+        # Register alphabar as a non-persistent buffer so it auto-moves to GPU (no numpy↔torch churn)
+        _alphabar_np = np.cumprod(1 - np.linspace(1e-4, 2e-2, self.cfg.max_T))
+        self.register_buffer('alphabar', torch.from_numpy(_alphabar_np).float(), persistent=False)
         
         # self.diffusion = LinearDiffusion(T=self.cfg.max_T)#'linear')
         self.best_val_loss = None
@@ -148,27 +150,22 @@ class Tadiff_model(LightningModule):
         treat_cond = [treat1.to(torch.float32), treat2.to(torch.float32),  
                       treat3.to(torch.float32), treat_t.to(torch.float32)]
         
-        gt_img = torch.cat([imgs[[i], j, :, :, :] for i, j in zip(range(b), i_tg)], dim=0)
-        gt_label = torch.cat([label[[i], j, :, :] for i, j in zip(range(b), i_tg)], dim=0)
-        t = torch.randint(1, self.diffusion.T + 1, [gt_img.shape[0]]) # , device=self.device
-        w_tg = self.alphabar[t-1]
-        
+        # Vectorized gathering of target images and labels (no Python loops)
+        batch_idx = torch.arange(b, device=self.device)
+        gt_img = imgs[batch_idx, i_tg]          # (b, c, h, w)
+        gt_label = label[batch_idx, i_tg]        # (b, h, w)
+        t = torch.randint(1, self.diffusion.T + 1, [b], device=self.device)
+        w_tg = self.alphabar[t - 1]              # (b,) — registered buffer, already on GPU
+
         xt, epsilon = self.diffusion.sample(gt_img.to(torch.float32), t)
-        # t = self.rng.draw(img.shape[0]) # draw t/timesteps from uniform distribution
-        # noised_x, target, t, weights = self.diffusion.sample(label.to(torch.float32), t)
-        # for i, j in zip(range(b), i_tg):
-        #     seq_imgs[i][:, j, :, :] = xt[i, :, :, :]  # nosie target image
-        
-        maskout_batch = (s3_days == t_days) 
-        for i, j in zip(range(b), i_tg):
-            if maskout_batch[i]:
-                imgs[i, :, :, :, :] = 0.
-                label[i, :, :, :] = 0
-            label[i, j, :, :] = gt_label[i, :, :]
-            imgs[i, j, :, :, :] = xt[i, :, :, :]  # nosie target image
-        # xt = torch.cat((seq_imgs), dim=0).transpose(1,2).reshape(b, s*c, h, w).contiguous() 
-        xt = imgs.reshape(b, s*c, h, w).contiguous() 
-        t = t.view(gt_img.shape[0]).to(self.device)
+
+        # Vectorized maskout and target replacement (no Python loops)
+        maskout_batch = (s3_days == t_days)
+        imgs[maskout_batch] = 0.
+        label[maskout_batch] = 0
+        label[batch_idx, i_tg] = gt_label
+        imgs[batch_idx, i_tg] = xt              # replace target session with noised image
+        xt = imgs.reshape(b, s*c, h, w).contiguous()
         
         # xt = torch.cat((cond_img, xt), dim=1)
         
@@ -191,48 +188,31 @@ class Tadiff_model(LightningModule):
         
         dice_loss = self.dice(mask_pred, label).squeeze() # all segementaed masks b, 4, 1, 1
         
-        w_tg = torch.from_numpy(w_tg).to(self.device) # (b, )
-        # dice_loss = dice_loss * w_tg.view(b, 1)  # weighted the loss one more time, w_tg ** 3 for target image, but for refence image only appply w_tg
-        # weighted future tumor loss based on nosized level
-        for i, j in zip(range(b), i_tg):
-            # dice_loss[i, j] = dice_loss[i, j] * torch.sqrt(w_tg[i])
-            if maskout_batch[i]:
-                loss_ij = dice_loss[i, j] * torch.sqrt(w_tg[i])
-                dice_loss[i, :] = 0.
-                dice_loss[i, j] = loss_ij  # weight target image loss, w_tg ** 3
-            else:
-                dice_loss[i, j] = dice_loss[i, j] * torch.sqrt(w_tg[i]) # w_tg[i]**2  # weight target image loss, w_tg ** 3
-            
-        # w_dims = (b,) + tuple((1 for _ in dice_loss.shape[1:]))
-        # dice_loss = dice_loss * w_tg.view(b, 1)  # weighted the loss one more time, w_tg ** 3 for target image, but for refence image only appply w_tg
+        # w_tg is already a GPU tensor (registered buffer), no CPU→GPU conversion needed
+        # Vectorized dice loss weighting based on noise level (no Python loops)
+        sqrt_w = torch.sqrt(w_tg)  # (b,)
+
+        # Weight target session's dice loss by sqrt(alphabar_t)
+        dice_loss[batch_idx, i_tg] = dice_loss[batch_idx, i_tg] * sqrt_w
+
+        # For masked-out samples, zero out non-target sessions
+        if maskout_batch.any():
+            n_sess = dice_loss.shape[1]
+            sess_idx = torch.arange(n_sess, device=self.device).unsqueeze(0)  # (1, n_sess)
+            non_target = sess_idx != i_tg.unsqueeze(1)                         # (b, n_sess)
+            zero_mask = maskout_batch.unsqueeze(1) & non_target                 # (b, n_sess)
+            dice_loss = dice_loss.masked_fill(zero_mask, 0.)
 
         # ========== LAMBDA SCHEDULE FOR AUXILIARY LOSS ==========
-        # Paper uses fixed lambda=0.01 for segmentation loss weighting (Eq. 16).
-        # This implementation supports both fixed and time-dependent schedules:
-        #   - fixed: lambda(t) = 0.01 (original paper)
-        #   - time_dependent: lambda(t) = 0.01 * alphabar_t^2 (experimental)
-        #
-        # Time-dependent motivation: Weight segmentation loss higher at low noise (clear signal)
-        # and lower at high noise (corrupted signal) to improve training stability.
-
         if hasattr(self.cfg, 'lambda_schedule') and self.cfg.lambda_schedule == 'time_dependent':
-            # ===== TIME-DEPENDENT LAMBDA =====
-            # Get alphabar for the current timestep (b,) shape
-            # Note: t is on GPU (CUDA), self.alphabar is numpy on CPU, so convert t to CPU before indexing
-            t_indices = (t.cpu().long() - 1).numpy()
-            alphabar_t = torch.from_numpy(self.alphabar[t_indices]).to(t.device).float()  # shape: (b,)
-
-            # Compute time-dependent lambda: lambda(t) = lambda_0 * alphabar_t^k
-            k = 2.0  # exponent controlling how much lambda varies with time
-            lambda_t = self.cfg.aux_loss_w * (alphabar_t ** k)  # shape: (b,)
-
-            # Apply time-dependent weighting to dice loss (average across batch)
-            # Reshape lambda_t for broadcasting: (b,) -> (b, 1, 1, 1) to match dice_loss shape (b, 4, h, w)
-            lambda_t_reshaped = lambda_t.view(-1, 1, 1, 1)
-            weighted_dice_loss = torch.mean(dice_loss) * lambda_t_reshaped.mean()  # average lambda across batch
+            # Time-dependent: lambda(t) = lambda_0 * alphabar_t^k
+            # All tensors already on GPU — no CPU↔GPU transfers
+            alphabar_t = self.alphabar[t - 1]  # (b,) — registered buffer, already on GPU
+            k = 2.0
+            lambda_t = self.cfg.aux_loss_w * (alphabar_t ** k)  # (b,)
+            weighted_dice_loss = torch.mean(dice_loss) * lambda_t.mean()
         else:
-            # ===== FIXED LAMBDA (ORIGINAL PAPER) =====
-            # Use constant lambda = aux_loss_w = 0.01 regardless of timestep
+            # Fixed lambda (original paper): lambda = aux_loss_w = 0.01
             weighted_dice_loss = torch.mean(dice_loss) * self.cfg.aux_loss_w
 
         loss = loss1 + weighted_dice_loss

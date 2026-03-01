@@ -46,7 +46,7 @@ aux_loss_w = 0.01         # ADDED: lambda in joint loss (Eq. 16), referenced in 
 lambda_schedule = 'fixed'  # 'fixed' (constant 0.01) or 'time_dependent' (lambda(t) = 0.01 * alphabar_t^2)
 
 batch_size = 1             # per-GPU batch size for 3D volumes (each yields sw_batch 2D slices)
-sw_batch = 16              # number of 2D slices sampled per volume
+sw_batch = 32              # paper says batch size 32, with accum 2 → effective batch 64
 num_workers = 8
 
 grad_clip = 1.5
