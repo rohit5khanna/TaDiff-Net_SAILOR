@@ -151,9 +151,10 @@ class Tadiff_model(LightningModule):
                       treat3.to(torch.float32), treat_t.to(torch.float32)]
         
         # Vectorized gathering of target images and labels (no Python loops)
-        batch_idx = torch.arange(b, device=self.device)
-        gt_img = imgs[batch_idx, i_tg]          # (b, c, h, w)
-        gt_label = label[batch_idx, i_tg]        # (b, h, w)
+        batch_idx = torch.arange(b, device=self.device, dtype=torch.long)
+        i_tg_long = i_tg.long()  # ensure int64 for indexing compatibility
+        gt_img = imgs[batch_idx, i_tg_long]     # (b, c, h, w)
+        gt_label = label[batch_idx, i_tg_long]   # (b, h, w)
         t = torch.randint(1, self.diffusion.T + 1, [b], device=self.device)
         w_tg = self.alphabar[t - 1]              # (b,) — registered buffer, already on GPU
 
@@ -163,8 +164,8 @@ class Tadiff_model(LightningModule):
         maskout_batch = (s3_days == t_days)
         imgs[maskout_batch] = 0.
         label[maskout_batch] = 0
-        label[batch_idx, i_tg] = gt_label
-        imgs[batch_idx, i_tg] = xt              # replace target session with noised image
+        label[batch_idx, i_tg_long] = gt_label
+        imgs[batch_idx, i_tg_long] = xt        # replace target session with noised image
         xt = imgs.reshape(b, s*c, h, w).contiguous()
         
         # xt = torch.cat((cond_img, xt), dim=1)
@@ -193,13 +194,13 @@ class Tadiff_model(LightningModule):
         sqrt_w = torch.sqrt(w_tg)  # (b,)
 
         # Weight target session's dice loss by sqrt(alphabar_t)
-        dice_loss[batch_idx, i_tg] = dice_loss[batch_idx, i_tg] * sqrt_w
+        dice_loss[batch_idx, i_tg_long] = dice_loss[batch_idx, i_tg_long] * sqrt_w
 
         # For masked-out samples, zero out non-target sessions
         if maskout_batch.any():
             n_sess = dice_loss.shape[1]
-            sess_idx = torch.arange(n_sess, device=self.device).unsqueeze(0)  # (1, n_sess)
-            non_target = sess_idx != i_tg.unsqueeze(1)                         # (b, n_sess)
+            sess_idx = torch.arange(n_sess, device=self.device, dtype=torch.long).unsqueeze(0)  # (1, n_sess)
+            non_target = sess_idx != i_tg_long.unsqueeze(1)                     # (b, n_sess)
             zero_mask = maskout_batch.unsqueeze(1) & non_target                 # (b, n_sess)
             dice_loss = dice_loss.masked_fill(zero_mask, 0.)
 
