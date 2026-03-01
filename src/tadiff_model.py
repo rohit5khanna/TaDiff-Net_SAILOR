@@ -128,17 +128,15 @@ class Tadiff_model(LightningModule):
         b, s, c, h, w = imgs.shape
         s1_days, s2_days, s3_days, t_days = days[:, 0], days[:,1], days[:, 2], days[:, 3]
         
-        if mode == 'train' and np.random.random_sample() > 0.5: 
-            # i_tg = np.random.randint(s, size=b)
-            # is_repeat = s2_days == s1_days
-            # i_tg[is_repeat.detach().cpu().numpy()] = -1
-            i_tg = torch.randint(0, s, (b,), device=self.device)
-            # i_tg[(s2_days == s1_days) * (s3_days == s2_days)] = -1
-            i_tg[(s2_days != s1_days) * (s3_days == s2_days)] = -1 if np.random.random_sample() > 0.5 else 0
-            i_tg[(s2_days == s1_days) * (s3_days != s2_days)] = -1 if np.random.random_sample() > 0.5 else -2
-            # i_tg[s3_days == s2_days] = -1
+        # Paper-faithful scenario sampling: 50% future, 30% middle, 20% past
+        if mode == 'train':
+            rand_vals = np.random.random_sample(b)
+            i_tg = torch.zeros(b, dtype=torch.int8, device=self.device)
+            i_tg[rand_vals < 0.5] = -1     # future: 50%
+            i_tg[(rand_vals >= 0.5) & (rand_vals < 0.8)] = 0   # middle: 30%
+            i_tg[rand_vals >= 0.8] = -2    # past: 20%
         else:
-            # i_tg = -np.ones(b, dtype=np.int8)
+            # Validation: always use future session
             i_tg = -torch.ones((b,), dtype=torch.int8, device=self.device)
 
         
