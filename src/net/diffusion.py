@@ -146,7 +146,7 @@ class GaussianDiffusion(nn.Module):
         
         for t, t_next in zip(times[:-1], times[1:]):
             with torch.no_grad():
-                pred = net(x, t.repeat(b).to(self.device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
+                pred = net(x, t.repeat(b).to(device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
                 img_p, mask = pred[:, 4:7, :, :], pred[:, :4, :, :]
             
             
@@ -163,7 +163,7 @@ class GaussianDiffusion(nn.Module):
             
             D1 = (img_p - xt) / (1 - self.alphabar[t])
             if t_next >= 0:
-                pred_next = net(x.view(b, 12, h, w), t_next.repeat(b).to(self.device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
+                pred_next = net(x.view(b, 12, h, w), t_next.repeat(b).to(device), intv_t=intv, treat_code=treat_cond, i_tg=i_tg)
                 img_p_next = pred_next[:, 4:7, :, :]
                 D1_next = (img_p_next - xt) / (1 - self.alphabar[t_next])
                 D2 = (D1_next - D1) / lambda_h
