@@ -82,6 +82,7 @@ def main():
     print(f"Grad accum:     {cfg.accumulate_grad_batches}")
     print(f"GPU devices:    {cfg.gpu_devices}")
     print(f"Precision:      {cfg.precision}")
+    print(f"Torch compile:  {cfg.use_torch_compile} ({cfg.torch_compile_mode})")
     print(f"aux_loss_w:     {cfg.aux_loss_w}")
     lambda_schedule = getattr(cfg, 'lambda_schedule', 'fixed')
     print(f"Lambda schedule:{lambda_schedule}")
@@ -96,6 +97,12 @@ def main():
 
     # ---- Step 4: Create model ----
     model = Tadiff_model(cfg)
+    if cfg.use_torch_compile:
+        if hasattr(torch, "compile"):
+            print(f"Compiling model with torch.compile(mode='{cfg.torch_compile_mode}')...")
+            model = torch.compile(model, mode=cfg.torch_compile_mode, fullgraph=False)
+        else:
+            print("WARNING: torch.compile requested but unavailable in this PyTorch build.")
 
     # Print model size
     total_params = sum(p.numel() for p in model.parameters())

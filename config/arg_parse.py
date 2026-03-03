@@ -30,6 +30,11 @@ def load_args(cfg):
                         help='Log metrics every N optimizer steps')
     parser.add_argument("--enable_progress_bar", default=cfg.enable_progress_bar, action='store_true',
                         help='Enable Rich progress bar output')
+    parser.add_argument("--use_torch_compile", default=cfg.use_torch_compile, action='store_true',
+                        help='Enable torch.compile optimization (PyTorch 2.x)')
+    parser.add_argument("--torch_compile_mode", type=str, default=cfg.torch_compile_mode,
+                        choices=["default", "reduce-overhead", "max-autotune"],
+                        help='Compilation mode passed to torch.compile')
 
     ## VALIDATION
     parser.add_argument("--val_interval_epoch", type=int, default=cfg.val_interval_epoch)

@@ -70,6 +70,8 @@ gpu_strategy = "auto"      # was "ddp" — use "auto" for single GPU, "ddp" for 
 gpu_accelerator = "gpu"
 precision = 32             # 16-mixed, 32
 enable_progress_bar = False
+use_torch_compile = False
+torch_compile_mode = "default"  # default, reduce-overhead, max-autotune
 
 val_interval_epoch = 10
 resume_from_ckpt = False
