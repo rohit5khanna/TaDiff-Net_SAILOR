@@ -252,7 +252,8 @@ class Tadiff_model(LightningModule):
         sync_dist = self._sync_dist()
         self.log("train_loss", loss, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=True)
         self.log("train_mse", mse, sync_dist=sync_dist, on_step=False, on_epoch=True, prog_bar=False)
-        return {"loss": loss, "mse": mse, "dice_seg": dice_seg}
+        # Return scalar loss only to avoid retaining extra tensors in step outputs.
+        return loss
 
     def validation_step(self, batch, batch_idx):
         loss, mse, dice = self.get_loss(batch, mode='val')
