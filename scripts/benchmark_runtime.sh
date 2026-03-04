@@ -18,6 +18,7 @@ PROFILE_COMPILE="${PROFILE_COMPILE:-0}"
 TORCH_COMPILE_MODE="${TORCH_COMPILE_MODE:-default}"
 ENABLE_PROGRESS_BAR="${ENABLE_PROGRESS_BAR:-0}"
 GPU_MON_INTERVAL_SEC="${GPU_MON_INTERVAL_SEC:-1}"
+GPU_MON_ID="${GPU_MON_ID:-}"
 
 # Runtime-only knobs: safe for paper-faithful optimization.
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
@@ -51,6 +52,55 @@ CSV
   echo "numexpr_num_threads=$NUMEXPR_NUM_THREADS"
   echo "wandb_mode=$WANDB_MODE"
 } > "$OUT_DIR/env.txt"
+
+# ---- Startup environment self-check ----
+{
+  echo "which_python=$(command -v python || true)"
+  echo "python_version=$(python -V 2>&1 || true)"
+  echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+  echo "slurm_job_id=${SLURM_JOB_ID:-unset}"
+} > "$OUT_DIR/python_env_check.txt"
+
+if ! python - <<'PY' >> "$OUT_DIR/python_env_check.txt" 2>&1; then
+import sys
+print("python_executable:", sys.executable)
+try:
+    import torch
+except Exception as e:
+    print("torch_import_error:", repr(e))
+    raise
+print("torch_version:", torch.__version__)
+print("torch_cuda_available:", torch.cuda.is_available())
+print("torch_cuda_device_count:", torch.cuda.device_count())
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is not available. Check CUDA modules, driver, and environment activation.")
+PY
+  echo "[ERROR] Environment self-check failed. See: $OUT_DIR/python_env_check.txt"
+  exit 1
+fi
+
+resolve_gpu_mon_id() {
+  if [[ -n "$GPU_MON_ID" ]]; then
+    echo "$GPU_MON_ID"
+    return
+  fi
+
+  # Prefer the first assigned CUDA device from scheduler masking.
+  if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    local first
+    first="$(echo "$CUDA_VISIBLE_DEVICES" | cut -d',' -f1)"
+    if [[ -n "$first" ]]; then
+      echo "$first"
+      return
+    fi
+  fi
+
+  # Fallback: monitor GPU 0.
+  echo "0"
+}
+
+GPU_MON_ID="$(resolve_gpu_mon_id)"
+echo "gpu_monitor_id=$GPU_MON_ID" >> "$OUT_DIR/env.txt"
 
 run_trial() {
   local num_workers="$1"
@@ -89,7 +139,7 @@ run_trial() {
   echo "[RUN] $trial_name"
   echo "      $(cat "$trial_dir/cmd.shline")"
 
-  nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits -l "$GPU_MON_INTERVAL_SEC" > "$gpu_log" 2>/dev/null &
+  nvidia-smi --id "$GPU_MON_ID" --query-gpu=utilization.gpu --format=csv,noheader,nounits -l "$GPU_MON_INTERVAL_SEC" > "$gpu_log" 2>/dev/null &
   local gpu_pid=$!
 
   local start_ts
@@ -161,4 +211,3 @@ awk -F, '
   NR==1 {print; next}
   {print}
 ' "$CSV_PATH"
-

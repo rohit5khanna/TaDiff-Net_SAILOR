@@ -20,6 +20,17 @@ cd "$REPO_DIR"
 # Optional: activate your environment here.
 # source /work/11343/rohitk59/ls6/TaDiff_Baseline/TaDiff-Net_SAILOR/tadiff/bin/activate
 
+# Explicit env self-check (catch missing venv / missing torch before burning allocation time).
+which python
+python -V
+python - <<'PY'
+import torch
+print("torch_version:", torch.__version__)
+print("cuda_available:", torch.cuda.is_available())
+print("cuda_device_count:", torch.cuda.device_count())
+assert torch.cuda.is_available(), "CUDA is not available."
+PY
+
 # Runtime tuning profile defaults.
 export MAX_STEPS=400
 export NUM_WORKERS_LIST="8 16 24"
@@ -40,4 +51,3 @@ export SW_BATCH=32
 export ACCUM=2
 
 bash scripts/benchmark_runtime.sh
-

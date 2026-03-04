@@ -10,6 +10,7 @@ This benchmark is designed to tune throughput without changing baseline training
 - `sec_per_microbatch`
 - `slices_per_sec`
 - average GPU utilization
+- startup environment self-check report (`python_env_check.txt`)
 
 Default sweep:
 
@@ -41,6 +42,8 @@ export PROFILE_COMPILE=1
 export TORCH_COMPILE_MODE=default
 export LOG_INTERVAL=100
 export OUT_DIR=/path/to/benchmark_outputs
+# Optional: force specific GPU id/UUID for utilization monitoring.
+export GPU_MON_ID=0
 ```
 
 ## Output
@@ -49,5 +52,8 @@ CSV path:
 
 `benchmarks/runtime_<timestamp>/summary.csv`
 
-Use the row with lowest `sec_per_step` among `status=ok` trials for your next confirmation run.
+Env check path:
 
+`benchmarks/runtime_<timestamp>/python_env_check.txt`
+
+Use the row with lowest `sec_per_step` among `status=ok` trials for your next confirmation run.
