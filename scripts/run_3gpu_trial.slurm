@@ -1,6 +1,6 @@
 #!/bin/bash
 # Submit one 3-GPU DDP trial:
-#   sbatch --export=ALL,TRIAL_NAME=three_x_batch_fixed_lambda scripts/run_3gpu_trial.slurm
+#   sbatch --export=ALL,TRIAL_NAME=original_batch_fixed_lambda,MAX_STEPS=5000000 scripts/run_3gpu_trial.slurm
 
 #SBATCH -J tadiff-3gpu-trial
 #SBATCH -p gpu-a100
@@ -31,8 +31,8 @@ assert torch.cuda.is_available(), "CUDA is not available."
 PY
 
 # Common runtime defaults (override with --export=ALL,KEY=VALUE at sbatch time).
-TRIAL_NAME="${TRIAL_NAME:-three_x_batch_fixed_lambda}"
-MAX_STEPS="${MAX_STEPS:-5000}"
+TRIAL_NAME="${TRIAL_NAME:-original_batch_fixed_lambda}"
+MAX_STEPS="${MAX_STEPS:-5000000}"
 PRECISION="${PRECISION:-32}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 LOG_INTERVAL="${LOG_INTERVAL:-100}"
