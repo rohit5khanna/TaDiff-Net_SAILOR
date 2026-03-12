@@ -39,6 +39,7 @@ LOG_INTERVAL="${LOG_INTERVAL:-100}"
 VAL_INTERVAL_EPOCH="${VAL_INTERVAL_EPOCH:-1000}"
 GPU_DEVICES="${GPU_DEVICES:-0,1,2}"
 GPU_STRATEGY="${GPU_STRATEGY:-ddp}"
+BASE_LOGDIR="${BASE_LOGDIR:-/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts}"
 
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
@@ -79,9 +80,19 @@ echo "ACCUM=$ACCUM"
 echo "NUM_WORKERS=$NUM_WORKERS"
 echo "PRECISION=$PRECISION"
 
+RUN_TAG="${RUN_TAG:-${TRIAL_NAME}_job${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)}"
+RUN_LOGDIR="${BASE_LOGDIR}/${RUN_TAG}"
+mkdir -p "$RUN_LOGDIR"
+
+echo "BASE_LOGDIR=$BASE_LOGDIR"
+echo "RUN_TAG=$RUN_TAG"
+echo "RUN_LOGDIR=$RUN_LOGDIR"
+echo "$RUN_LOGDIR" > "trial3gpu_${SLURM_JOB_ID}.logdir"
+
 python train.py \
   --gpu_devices "$GPU_DEVICES" \
   --gpu_strategy "$GPU_STRATEGY" \
+  --logdir "$RUN_LOGDIR" \
   --lambda_schedule "$LAMBDA_SCHEDULE" \
   --max_steps "$MAX_STEPS" \
   --num_workers "$NUM_WORKERS" \
