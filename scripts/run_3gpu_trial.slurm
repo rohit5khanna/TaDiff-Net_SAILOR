@@ -37,6 +37,8 @@ PRECISION="${PRECISION:-32}"
 NUM_WORKERS="${NUM_WORKERS:-4}"
 LOG_INTERVAL="${LOG_INTERVAL:-100}"
 VAL_INTERVAL_EPOCH="${VAL_INTERVAL_EPOCH:-1000}"
+CKPT_EVERY_N_TRAIN_STEPS="${CKPT_EVERY_N_TRAIN_STEPS:-5000}"
+CKPT_STEP_SAVE_TOP_K="${CKPT_STEP_SAVE_TOP_K:-2}"
 GPU_DEVICES="${GPU_DEVICES:-0,1,2}"
 GPU_STRATEGY="${GPU_STRATEGY:-ddp}"
 BASE_LOGDIR="${BASE_LOGDIR:-/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts}"
@@ -79,6 +81,8 @@ echo "SW_BATCH=$SW_BATCH"
 echo "ACCUM=$ACCUM"
 echo "NUM_WORKERS=$NUM_WORKERS"
 echo "PRECISION=$PRECISION"
+echo "CKPT_EVERY_N_TRAIN_STEPS=$CKPT_EVERY_N_TRAIN_STEPS"
+echo "CKPT_STEP_SAVE_TOP_K=$CKPT_STEP_SAVE_TOP_K"
 
 RUN_TAG="${RUN_TAG:-${TRIAL_NAME}_job${SLURM_JOB_ID}_$(date +%Y%m%d_%H%M%S)}"
 RUN_LOGDIR="${BASE_LOGDIR}/${RUN_TAG}"
@@ -97,6 +101,8 @@ python train.py \
   --max_steps "$MAX_STEPS" \
   --num_workers "$NUM_WORKERS" \
   --precision "$PRECISION" \
+  --ckpt_every_n_train_steps "$CKPT_EVERY_N_TRAIN_STEPS" \
+  --ckpt_step_save_top_k "$CKPT_STEP_SAVE_TOP_K" \
   --sw_batch "$SW_BATCH" \
   --accumulate_grad_batches "$ACCUM" \
   --val_interval_epoch "$VAL_INTERVAL_EPOCH" \

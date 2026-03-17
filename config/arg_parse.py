@@ -30,6 +30,10 @@ def load_args(cfg):
                         help='Output directory for checkpoints and logger files')
     parser.add_argument("--log_interval", type=int, default=cfg.log_interval,
                         help='Log metrics every N optimizer steps')
+    parser.add_argument("--ckpt_every_n_train_steps", type=int, default=cfg.ckpt_every_n_train_steps,
+                        help='Save a resumable checkpoint every N optimizer steps (0 to disable)')
+    parser.add_argument("--ckpt_step_save_top_k", type=int, default=cfg.ckpt_step_save_top_k,
+                        help='How many recent step-based checkpoints to keep')
     parser.add_argument("--enable_progress_bar", default=cfg.enable_progress_bar, action='store_true',
                         help='Enable Rich progress bar output')
     parser.add_argument("--use_torch_compile", default=cfg.use_torch_compile, action='store_true',

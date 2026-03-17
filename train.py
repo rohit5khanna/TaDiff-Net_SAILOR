@@ -114,28 +114,51 @@ def main():
     # ---- Step 5: Configure callbacks ----
     callbacks = []
 
-    # 5a. ModelCheckpoint: saves best + last checkpoints
-    checkpoint_callback = ModelCheckpoint(
+    # 5a. Validation-monitored checkpoint (best val_loss snapshots).
+    val_checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.logdir,
         filename=cfg.ckpt_filename,
         monitor=cfg.ckpt_monitor,      # "val_loss"
         mode=cfg.ckpt_mode,            # "min"
         save_top_k=cfg.ckpt_save_top_k,  # keep top 3
-        save_last=cfg.ckpt_save_last,    # always save last
+        save_last=False,
         verbose=True,
         every_n_epochs=cfg.val_interval_epoch,  # only check when validation runs
     )
-    callbacks.append(checkpoint_callback)
+    callbacks.append(val_checkpoint_callback)
 
-    # 5b. LearningRateMonitor: logs LR to the logger
+    # 5b. Step-based checkpoint for robust resume across timeouts/preemptions.
+    ckpt_every_n_train_steps = int(getattr(cfg, "ckpt_every_n_train_steps", 5000))
+    ckpt_step_save_top_k = int(getattr(cfg, "ckpt_step_save_top_k", 2))
+    if ckpt_every_n_train_steps > 0:
+        step_checkpoint_callback = ModelCheckpoint(
+            dirpath=cfg.logdir,
+            filename="step-{step}",
+            monitor=None,
+            mode="min",
+            save_top_k=max(1, ckpt_step_save_top_k),
+            save_last=True,
+            verbose=True,
+            every_n_train_steps=ckpt_every_n_train_steps,
+            save_on_train_epoch_end=False,
+        )
+        callbacks.append(step_checkpoint_callback)
+        print(
+            f"Step checkpointing enabled: every {ckpt_every_n_train_steps} train steps "
+            f"(keep top_k={max(1, ckpt_step_save_top_k)} + last.ckpt)"
+        )
+    else:
+        print("WARNING: ckpt_every_n_train_steps <= 0, step-based checkpointing is disabled.")
+
+    # 5c. LearningRateMonitor: logs LR to the logger
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
     callbacks.append(lr_monitor)
 
-    # 5c. Progress bar (disable on long cluster jobs for lower overhead)
+    # 5d. Progress bar (disable on long cluster jobs for lower overhead)
     if cfg.enable_progress_bar:
         callbacks.append(RichProgressBar())
 
-    # 5d. MyCallback for validation visualization
+    # 5e. MyCallback for validation visualization
     # NOTE: MyCallback requires a sample batch to initialize.
     # We set it up after the datamodule is ready.
     # It will be added during training via a hook or manually.
@@ -216,8 +239,8 @@ def main():
     # ---- Step 10: Print final results ----
     print("\n" + "=" * 60)
     print("Training complete!")
-    print(f"Best model saved at: {checkpoint_callback.best_model_path}")
-    print(f"Best val_loss: {checkpoint_callback.best_model_score}")
+    print(f"Best model saved at: {val_checkpoint_callback.best_model_path}")
+    print(f"Best val_loss: {val_checkpoint_callback.best_model_score}")
     print("=" * 60)
 
 

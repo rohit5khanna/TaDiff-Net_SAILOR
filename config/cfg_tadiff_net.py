@@ -62,6 +62,8 @@ cache_rate = 0.  # cache rate for MONAI CacheDataset (0=no cache, 1=all in memor
 wandb_entity = "rkhanna5-university-of-texas-at-austin"    # WandB team for logging metrics and comparing runs
 logdir = '/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts'
 log_interval = 50
+ckpt_every_n_train_steps = 5000
+ckpt_step_save_top_k = 2
 seed = 114514
 
 # UPDATE these based on your hardware:
