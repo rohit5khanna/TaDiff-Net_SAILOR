@@ -129,14 +129,20 @@ def main():
 
     # 5b. Step-based checkpoint for robust resume across timeouts/preemptions.
     ckpt_every_n_train_steps = int(getattr(cfg, "ckpt_every_n_train_steps", 5000))
-    ckpt_step_save_top_k = int(getattr(cfg, "ckpt_step_save_top_k", 2))
+    ckpt_step_save_top_k = int(getattr(cfg, "ckpt_step_save_top_k", 1))
+    if ckpt_step_save_top_k not in (-1, 0, 1):
+        print(
+            "WARNING: This Lightning version requires ckpt_step_save_top_k in {-1,0,1} "
+            "when monitor=None for step checkpoints. Forcing ckpt_step_save_top_k=1."
+        )
+        ckpt_step_save_top_k = 1
     if ckpt_every_n_train_steps > 0:
         step_checkpoint_callback = ModelCheckpoint(
             dirpath=cfg.logdir,
             filename="step-{step}",
             monitor=None,
             mode="min",
-            save_top_k=max(1, ckpt_step_save_top_k),
+            save_top_k=ckpt_step_save_top_k,
             save_last=True,
             verbose=True,
             every_n_train_steps=ckpt_every_n_train_steps,
@@ -145,7 +151,7 @@ def main():
         callbacks.append(step_checkpoint_callback)
         print(
             f"Step checkpointing enabled: every {ckpt_every_n_train_steps} train steps "
-            f"(keep top_k={max(1, ckpt_step_save_top_k)} + last.ckpt)"
+            f"(save_top_k={ckpt_step_save_top_k} + last.ckpt)"
         )
     else:
         print("WARNING: ckpt_every_n_train_steps <= 0, step-based checkpointing is disabled.")

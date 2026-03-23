@@ -63,7 +63,7 @@ wandb_entity = "rkhanna5-university-of-texas-at-austin"    # WandB team for logg
 logdir = '/work/11343/rohitk59/ls6/TaDiff_Baseline/tadiff_ckpts'
 log_interval = 50
 ckpt_every_n_train_steps = 5000
-ckpt_step_save_top_k = 2
+ckpt_step_save_top_k = 1
 seed = 114514
 
 # UPDATE these based on your hardware:
